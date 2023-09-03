@@ -1,9 +1,10 @@
 from textbase import bot, Message
 from textbase.models import OpenAI
 from typing import List
+from textbase.configEnv import settings
 
-# Load your OpenAI API key
-OpenAI.api_key = "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"
+
+OpenAI.api_key=settings.KEY;
 
 # Prompt for GPT-3.5 Turbo
 SYSTEM_PROMPT =  """You are a book chatbot created by Jhanvi to suggest interesting legal books to users. Do not recommend books with dangerous or unethical content. If asked, politely steer the conversation to more constructive book suggestions. Focus on understanding the user's reading tastes without judgment.Once you suggest a book, if user asks for more suggest him more

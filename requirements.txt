@@ -40,3 +40,4 @@ watchdog==3.0.0
 Werkzeug==2.3.7
 yarl==1.9.2
 yaspin==3.0.0
+textbase-client>=0.1.2

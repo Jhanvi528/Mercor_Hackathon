@@ -1,70 +1,30 @@
-import openai
-
-from textbase.message import Message
 import json
-import pandas as pd
-import numpy as np
+import openai
+import requests
+import time
+import typing
+import traceback
 
-# Creating function description for price comparision.
-function_descriptions = [
-    {
-        "name": "other_restaurant_price_info",
-        "description": "Get price of item from different restaurant",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "restaurant_name": {
-                    "type": "string",
-                    "description": "The name of the other restaurant, e.g. pizzahut",
-                },
-                "ordered_item": {
-                    "type": "string",
-                    "description": "The ordered item, e.g. cheese pizza",
-                },
-                "ordered_item_size": {
-                    "type": "string",
-                    "description": "The ordered item size, e.g. small",
-                },
-            },
-            "required": ["restaurant_name", "ordered_item", "ordered_item_size"],
-        },
-    }
-]
+from textbase import Message
 
-# Created Datasets of known restaurants menu with price.
-pizzahut_data= pd.DataFrame([['large',13.15,11.55,12.95,5.50,4.00,4.00], ['medium',11.00,10.15,7.80,np.nan,3.00,3.00], 
-                  ['small',8.00,7.20,7.45,4.50,2.00,2.00]],columns= ['size','pepperoni pizza', 'cheese pizza','eggplant pizza','fries','coke','sprite'])
-dominos_data= pd.DataFrame([['large',13.85,11.95,13.15,5.80,4.50,4.50], ['medium',11.50,10.85,8.00,np.nan,3.50,3.50], 
-                  ['small',8.50,7.50,7.85,4.90,2.50,2.50]],columns= ['size','pepperoni pizza', 'cheese pizza','eggplant pizza','fries','coke','sprite'])
-
-
-# Defining the function for calling
-def other_restaurant_price_info(restaurant_name, ordered_item, ordered_item_size):
-    """Get price information of items from other restaurants."""
-
-    if 'pizzahut' in restaurant_name.lower():
-        price_info = {
-            "restaurant_name": restaurant_name,
-            "ordered_item": ordered_item,
-            "ordered_item_size": ordered_item_size,
-            "price": pizzahut_data[pizzahut_data['size']== ordered_item_size][ordered_item].item()
+# Return list of values of content.
+def get_contents(message: Message, data_type: str):
+    return [
+        {
+            "role": message["role"],
+            "content": content["value"]
         }
-    elif 'domino' in restaurant_name.lower():
-        price_info = {
-            "restaurant_name": restaurant_name,
-            "ordered_item": ordered_item,
-            "ordered_item_size": ordered_item_size,
-            "price": dominos_data[dominos_data['size']== ordered_item_size][ordered_item].item()
-        }
-    else:
-        price_info = {
-            "restaurant_name": restaurant_name,
-            "ordered_item": ordered_item,
-            "ordered_item_size": ordered_item_size,
-            "price": "No Data Available"
-        }
+        for content in message["content"]
+        if content["data_type"] == data_type
+    ]
 
-    return json.dumps(price_info)
+# Returns content if it's non empty.
+def extract_content_values(message: Message):
+    return [
+            content["content"]
+            for content in get_contents(message, "STRING")
+            if content
+        ]
 
 class OpenAI:
     api_key = None
@@ -76,44 +36,111 @@ class OpenAI:
         message_history: list[Message],
         model="gpt-3.5-turbo",
         max_tokens=3000,
-        temperature=0.5,
+        temperature=0.7,
     ):
-        assert cls.api_key is not None, "OpenAI API key is not set"
+        assert cls.api_key is not None, "OpenAI API key is not set."
         openai.api_key = cls.api_key
+
+        filtered_messages = []
+
+        for message in message_history:
+            #list of all the contents inside a single message
+            contents = get_contents(message, "STRING")
+            if contents:
+                filtered_messages.extend(contents)
 
         response = openai.ChatCompletion.create(
             model=model,
             messages=[
-                {"role": "system", "content": system_prompt},
-                *map(dict, message_history),
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                *map(dict, filtered_messages),
             ],
-            functions=function_descriptions,
             temperature=temperature,
             max_tokens=max_tokens,
         )
-        response1= response["choices"][0]["message"]
 
-        # Checking if the function is called for generating the output.
-        if "function_call" in response1:
+        return response["choices"][0]["message"]["content"]
 
-            params = json.loads(response1.function_call.arguments)
+class HuggingFace:
+    api_key = None
 
-            chosen_function = eval(response1.function_call.name)
-            price = chosen_function(**params)
+    @classmethod
+    def generate(
+        cls,
+        system_prompt: str,
+        message_history: list[Message],
+        model: typing.Optional[str] = "microsoft/DialoGPT-large",
+        max_tokens: typing.Optional[int] = 3000,
+        temperature: typing.Optional[float] = 0.7,
+        min_tokens: typing.Optional[int] = None,
+        top_k: typing.Optional[int] = None
+    ) -> str:
+        try:
+            assert cls.api_key is not None, "Hugging Face API key is not set."
 
-            response2 = openai.ChatCompletion.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    *map(dict, message_history),
-                    {"role": "function", "name": response1.function_call.name, "content": price},
-                ],
-                functions=function_descriptions,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            return response2["choices"][0]["message"]["content"]
-            
-        # Returning generated output without calling any function.
-        else:
-            return response["choices"][0]["message"]["content"]
+            headers = { "Authorization": f"Bearer { cls.api_key }" }
+            API_URL = "https://api-inference.huggingface.co/models/" + model
+            inputs = {
+                "past_user_inputs": [system_prompt],
+                "generated_responses": [f"Ok, I will answer according to the context, where context is '{system_prompt}'."],
+                "text": ""
+            }
+
+            for message in message_history:
+                if message["role"] == "user":
+                    inputs["past_user_inputs"].extend(extract_content_values(message))
+                else:
+                    inputs["generated_responses"].extend(extract_content_values(message))
+
+            inputs["text"] = inputs["past_user_inputs"].pop(-1)
+
+            payload = {
+                "inputs": inputs,
+                "max_length": max_tokens,
+                "temperature": temperature,
+                "min_length": min_tokens,
+                "top_k": top_k,
+            }
+
+            data = json.dumps(payload)
+            response = requests.request("POST", API_URL, headers=headers, data=data)
+            response = json.loads(response.content.decode("utf-8"))
+
+            if response.get("error", None) == "Authorization header is invalid, use 'Bearer API_TOKEN'.":
+                print("Hugging Face API key is not correct.")
+
+            if response.get("estimated_time", None):
+                print(f"Model is loading please wait for {response.get('estimated_time')}")
+                time.sleep(response.get("estimated_time"))
+                response = requests.request("POST", API_URL, headers=headers, data=data)
+                response = json.loads(response.content.decode("utf-8"))
+
+            return response["generated_text"]
+
+        except Exception:
+            print(f"An exception occured while using this model, please try using another model.\nException: {traceback.format_exc()}.")
+
+class BotLibre:
+    application = None
+    instance = None
+
+    @classmethod
+    def generate(
+        cls,
+        message_history: list[Message],
+    ):
+        most_recent_message = get_contents(message_history[-1], "STRING")
+
+        request = {
+            "application": cls.application,
+            "instance": cls.instance,
+            "message": most_recent_message
+        }
+        response = requests.post('https://www.botlibre.com/rest/json/chat', json=request)
+        data = json.loads(response.text) # parse the JSON data into a dictionary
+        message = data['message']
+
+        return message

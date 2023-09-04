@@ -10,7 +10,6 @@ OpenAI.api_key = settings.KEY
 
 # Initialize conversation history
 conversation_history = []
-
 @bot()
 def on_message(message_history: List[Message], state: dict = None):
     # Extract user messages from the conversation history and check for the role
@@ -18,9 +17,6 @@ def on_message(message_history: List[Message], state: dict = None):
     user_messages_text = ' '.join([message[0]['value'] for message in user_messages])
 
     # Determine the chatbot's role based on the user's input
-   # Determine the chatbot's role based on the user's input
-   # Determine the chatbot's role based on the user's input
-# Determine the chatbot's role based on the user's input
     if "movie" in user_messages_text.lower():
         personalized_prompt = "You are a chatbot created by Jhanvi to provide recommendations to users. " \
                             "Whether you're interested in discovering great movies or exploring captivating books, " \
@@ -31,8 +27,6 @@ def on_message(message_history: List[Message], state: dict = None):
                             "Whether you're looking for movie recommendations or seeking out interesting books, " \
                             "I've got you covered! Feel free to ask about movies or books, and I'll provide suggestions " \
                             "based on your preferences. Let's embark on a journey of discovery through movies and literature!\n"
-
-
 
     # Include the user's latest message in the prompt for context
     if user_messages:
